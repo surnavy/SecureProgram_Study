@@ -1,0 +1,28 @@
+# Build output
+Debug/
+Release/
+x64/
+x86/
+*.obj
+*.pch
+*.idb
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.exe
+*.dll
+
+# Visual Studio
+.vs/
+*.aps
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+
+# Runtime generated files
+fim_baseline.db
+fim_baseline.log
