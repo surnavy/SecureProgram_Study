@@ -60,6 +60,11 @@ public:
     void AddExcludedPath(const std::wstring& path);
     void ClearExcludedPaths();
 
+    // 제외 패턴 등록 (예: *.tmp, ~$*, *.bak)
+    // 패턴에 '\'가 없으면 파일명에만 매칭, 있으면 전체 경로에 매칭
+    void SetExcludedPatterns(const std::vector<std::wstring>& patterns);
+    const std::vector<std::wstring>& GetExcludedPatterns() const { return m_excludedPatterns; }
+
 private:
     void RaiseAlert(AlertSeverity severity,
                     const std::wstring& eventType,
@@ -82,4 +87,10 @@ private:
 
     // 제외 경로 목록 (소문자 정규화)
     std::unordered_set<std::wstring> m_excludedPaths;
+
+    // 제외 패턴 목록 (소문자 정규화)
+    std::vector<std::wstring> m_excludedPatterns;
+
+    // 와일드카드 패턴 매칭 (* 와 ? 지원)
+    static bool MatchPattern(const std::wstring& str, const std::wstring& pattern);
 };

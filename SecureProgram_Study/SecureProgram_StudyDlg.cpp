@@ -44,8 +44,12 @@ CSecureProgramStudyDlg::~CSecureProgramStudyDlg()
 void CSecureProgramStudyDlg::DoDataExchange(CDataExchange* pDX)
 {
     CDialogEx::DoDataExchange(pDX);
-    DDX_Control(pDX, IDC_EDIT_PATH,    m_editPath);
-    DDX_Control(pDX, IDC_LIST_ALTERS,  m_listAlerts);  // 다이얼로그 에디터 생성 ID
+    DDX_Control(pDX, IDC_EDIT_PATH,   m_editPath);
+    DDX_Control(pDX, IDC_LIST_ALTERS, m_listAlerts);
+
+    // IDC_EDIT_EXCLUDE 는 다이얼로그 에디터에 컨트롤 추가 후 활성화
+    if (GetDlgItem(IDC_EDIT_EXCLUDE))
+        DDX_Control(pDX, IDC_EDIT_EXCLUDE, m_editExclude);
 }
 
 BEGIN_MESSAGE_MAP(CSecureProgramStudyDlg, CDialogEx)
@@ -53,13 +57,18 @@ BEGIN_MESSAGE_MAP(CSecureProgramStudyDlg, CDialogEx)
     ON_WM_PAINT()
     ON_WM_QUERYDRAGICON()
     ON_WM_DESTROY()
+    ON_WM_SIZE()
     ON_BN_CLICKED(IDC_BTN_BROWSE,   &CSecureProgramStudyDlg::OnBnClickedBtnBrowse)
     ON_BN_CLICKED(IDC_BTN_BASELINE, &CSecureProgramStudyDlg::OnBnClickedBtnBaseline)
     ON_BN_CLICKED(IDC_BTN_START,    &CSecureProgramStudyDlg::OnBnClickedBtnStart)
     ON_BN_CLICKED(IDC_BTN_STOP,     &CSecureProgramStudyDlg::OnBnClickedBtnStop)
-    ON_BN_CLICKED(IDC_BTN_VERIFY,   &CSecureProgramStudyDlg::OnBnClickedBtnVerify)
-    ON_BN_CLICKED(IDC_BTN_CLEAR,    &CSecureProgramStudyDlg::OnBnClickedBtnClear)
+    ON_BN_CLICKED(IDC_BTN_VERIFY,        &CSecureProgramStudyDlg::OnBnClickedBtnVerify)
+    ON_BN_CLICKED(IDC_BTN_CLEAR,         &CSecureProgramStudyDlg::OnBnClickedBtnClear)
+    ON_BN_CLICKED(IDC_BTN_APPLY_PATTERN, &CSecureProgramStudyDlg::OnBnClickedBtnApplyPattern)
     ON_MESSAGE(WM_ALERT_NOTIFY,     &CSecureProgramStudyDlg::OnAlertNotify)
+    ON_MESSAGE(WM_TRAYICON,         &CSecureProgramStudyDlg::OnTrayIcon)
+    ON_COMMAND(ID_TRAY_SHOW,        &CSecureProgramStudyDlg::OnTrayShow)
+    ON_COMMAND(ID_TRAY_EXIT,        &CSecureProgramStudyDlg::OnTrayExit)
 END_MESSAGE_MAP()
 
 // ---- 초기화 ---------------------------------------------------------------
@@ -86,8 +95,17 @@ BOOL CSecureProgramStudyDlg::OnInitDialog()
     SetIcon(m_hIcon, FALSE);
     SetWindowText(_T("파일 무결성 감시 프로그램"));
 
+    // 최소화 버튼 추가
+    ModifyStyle(0, WS_MINIMIZEBOX);
+
     InitListCtrl();
-    GetDlgItem(IDC_BTN_STOP)->EnableWindow(FALSE);  // 초기엔 중지 버튼 비활성
+    GetDlgItem(IDC_BTN_STOP)->EnableWindow(FALSE);
+    AddTrayIcon();
+
+    // 기본 제외 패턴 설정 (컨트롤이 다이얼로그에 추가된 경우에만)
+    if (m_editExclude.GetSafeHwnd())
+        m_editExclude.SetWindowText(_T("*.tmp;*.bak;~$*;*.log;*.db"));
+
     SetStatusText(_T("준비"));
     return TRUE;
 }
@@ -292,6 +310,14 @@ void CSecureProgramStudyDlg::AddAlertToList(const AlertRecord& record)
                   CString(record.time.c_str()),
                   CString(record.eventType.c_str()));
     SetStatusText(status);
+
+    // 창이 숨겨진 상태일 때 트레이 풍선 알림
+    if (!IsWindowVisible() && record.severity == AlertSeverity::Critical)
+    {
+        DWORD icon = (record.severity == AlertSeverity::Critical) ? NIIF_ERROR : NIIF_WARNING;
+        ShowTrayBalloon(CString(record.eventType.c_str()),
+                        CString(record.filePath.c_str()), icon);
+    }
 }
 
 void CSecureProgramStudyDlg::SetStatusText(const CString& text)
@@ -339,6 +365,7 @@ void CSecureProgramStudyDlg::OnSysCommand(UINT nID, LPARAM lParam)
 void CSecureProgramStudyDlg::OnDestroy()
 {
     m_monitor.Stop();
+    RemoveTrayIcon();
     CDialogEx::OnDestroy();
 }
 
@@ -362,4 +389,126 @@ void CSecureProgramStudyDlg::OnPaint()
 HCURSOR CSecureProgramStudyDlg::OnQueryDragIcon()
 {
     return static_cast<HCURSOR>(m_hIcon);
+}
+
+// ---- 트레이 아이콘 --------------------------------------------------------
+
+void CSecureProgramStudyDlg::AddTrayIcon()
+{
+    m_nid.cbSize           = sizeof(NOTIFYICONDATA);
+    m_nid.hWnd             = GetSafeHwnd();
+    m_nid.uID              = 1;
+    m_nid.uFlags           = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    m_nid.uCallbackMessage = WM_TRAYICON;
+    m_nid.hIcon            = m_hIcon;
+    _tcscpy_s(m_nid.szTip, _T("파일 무결성 감시 프로그램"));
+    Shell_NotifyIcon(NIM_ADD, &m_nid);
+}
+
+void CSecureProgramStudyDlg::RemoveTrayIcon()
+{
+    Shell_NotifyIcon(NIM_DELETE, &m_nid);
+}
+
+void CSecureProgramStudyDlg::ShowTrayBalloon(const CString& title,
+                                              const CString& msg,
+                                              DWORD icon)
+{
+    m_nid.uFlags      = NIF_INFO;
+    m_nid.dwInfoFlags = icon;
+    m_nid.uTimeout    = 5000;
+    _tcscpy_s(m_nid.szInfoTitle, title);
+    _tcscpy_s(m_nid.szInfo,      msg);
+    Shell_NotifyIcon(NIM_MODIFY, &m_nid);
+
+    // 다음 호출을 위해 플래그 복원
+    m_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+}
+
+void CSecureProgramStudyDlg::ShowMainWindow()
+{
+    ShowWindow(SW_SHOW);
+    ShowWindow(SW_RESTORE);
+    SetForegroundWindow();
+}
+
+void CSecureProgramStudyDlg::HideToTray()
+{
+    ShowWindow(SW_HIDE);
+}
+
+// 최소화 시 트레이로 숨기기
+void CSecureProgramStudyDlg::OnSize(UINT nType, int cx, int cy)
+{
+    CDialogEx::OnSize(nType, cx, cy);
+    if (nType == SIZE_MINIMIZED)
+        HideToTray();
+}
+
+// 트레이 아이콘 클릭/더블클릭 처리
+LRESULT CSecureProgramStudyDlg::OnTrayIcon(WPARAM wParam, LPARAM lParam)
+{
+    switch (LOWORD(lParam))
+    {
+    case WM_LBUTTONDBLCLK:
+    case NIN_BALLOONUSERCLICK:  // 풍선 알림 클릭
+        ShowMainWindow();
+        break;
+
+    case WM_RBUTTONUP:
+    {
+        // 우클릭 컨텍스트 메뉴 표시
+        CMenu menu;
+        menu.CreatePopupMenu();
+        menu.AppendMenu(MF_STRING, ID_TRAY_SHOW, _T("열기"));
+        menu.AppendMenu(MF_SEPARATOR);
+        menu.AppendMenu(MF_STRING, ID_TRAY_EXIT, _T("종료"));
+
+        // 메뉴가 올바르게 닫히도록 포그라운드로 설정
+        SetForegroundWindow();
+        POINT pt;
+        GetCursorPos(&pt);
+        menu.TrackPopupMenu(TPM_RIGHTBUTTON, pt.x, pt.y, this);
+        break;
+    }
+    }
+    return 0;
+}
+
+void CSecureProgramStudyDlg::OnTrayShow()
+{
+    ShowMainWindow();
+}
+
+void CSecureProgramStudyDlg::OnTrayExit()
+{
+    RemoveTrayIcon();
+    DestroyWindow();
+}
+
+// ---- 제외 패턴 적용 -------------------------------------------------------
+
+void CSecureProgramStudyDlg::OnBnClickedBtnApplyPattern()
+{
+    if (!m_editExclude.GetSafeHwnd()) return;
+
+    CString input;
+    m_editExclude.GetWindowText(input);
+
+    // 세미콜론으로 분리해 패턴 목록 생성
+    std::vector<std::wstring> patterns;
+    int pos = 0;
+    CString token;
+    while ((token = input.Tokenize(_T(";"), pos)) != _T(""))
+    {
+        token.Trim();
+        if (!token.IsEmpty())
+            patterns.push_back(std::wstring(token));
+    }
+
+    m_alertManager.SetExcludedPatterns(patterns);
+
+    CString msg;
+    msg.Format(_T("제외 패턴 %zu개 적용됨"), patterns.size());
+    SetStatusText(msg);
 }

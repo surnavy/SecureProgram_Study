@@ -30,6 +30,51 @@ void AlertManager::ClearExcludedPaths()
     m_excludedPaths.clear();
 }
 
+void AlertManager::SetExcludedPatterns(const std::vector<std::wstring>& patterns)
+{
+    m_excludedPatterns.clear();
+    for (auto& p : patterns)
+    {
+        std::wstring lower = p;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
+        m_excludedPatterns.push_back(lower);
+    }
+}
+
+// 와일드카드 매칭: * = 0개 이상의 임의 문자, ? = 1개의 임의 문자
+bool AlertManager::MatchPattern(const std::wstring& str, const std::wstring& pattern)
+{
+    const wchar_t* s = str.c_str();
+    const wchar_t* p = pattern.c_str();
+    const wchar_t* starPos  = nullptr;  // 마지막 * 위치
+    const wchar_t* matchPos = s;        // * 매칭 시작 위치
+
+    while (*s)
+    {
+        if (*p == L'*')
+        {
+            starPos  = p++;
+            matchPos = s;
+        }
+        else if (*p == L'?' || *p == *s)
+        {
+            ++s; ++p;
+        }
+        else if (starPos)
+        {
+            // * 로 돌아가 한 글자 더 소비
+            p = starPos + 1;
+            s = ++matchPos;
+        }
+        else
+            return false;
+    }
+
+    // 남은 패턴이 * 뿐이면 매칭
+    while (*p == L'*') ++p;
+    return *p == L'\0';
+}
+
 // ---- FileMonitor 콜백 처리 ------------------------------------------------
 
 void AlertManager::OnFileEvent(const FileEvent& evt)
@@ -40,6 +85,19 @@ void AlertManager::OnFileEvent(const FileEvent& evt)
     std::wstring key = evt.filePath;
     std::transform(key.begin(), key.end(), key.begin(), ::towlower);
     if (m_excludedPaths.count(key)) return;
+
+    // 제외 패턴 확인 (파일명만 추출해서 패턴 매칭)
+    std::wstring fileName = key;
+    auto slashPos = key.rfind(L'\\');
+    if (slashPos != std::wstring::npos)
+        fileName = key.substr(slashPos + 1);
+
+    for (const auto& pattern : m_excludedPatterns)
+    {
+        // 패턴에 '\'가 있으면 전체 경로, 없으면 파일명에 매칭
+        const std::wstring& target = (pattern.find(L'\\') != std::wstring::npos) ? key : fileName;
+        if (MatchPattern(target, pattern)) return;
+    }
 
     switch (evt.type)
     {
